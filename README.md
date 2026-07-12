@@ -15,15 +15,26 @@ Project for Udacity's Sensor Fusion Engineer Nanodegree Program
 
 ### Dependencies:
 
-The configuration I used
+Verified working on:
 
-* Ubuntu 16.04 OS
-* cmake >= 3.14
-* gcc/g++ >= 8.0
-* PCL >= 1.2 : The code extensively utilizes the [Point Cloud Library (PCL)](http://pointclouds.org/).
+* Ubuntu 20.04 OS, PCL 1.8.1 (`sudo apt install libpcl-dev`)
+* cmake >= 2.8
+* gcc/g++ with C++11 support
 
+Target deployment platform: Jetson Orin Nano (JetPack, aarch64). The build only
+depends on PCL/CMake with no x86-specific code, so it is expected to build the
+same way there via `libpcl-dev`; re-verify on-device before relying on it.
 
+### Sample Data
 
+Point cloud `.pcd` sample data is **not** version-controlled (see `.gitignore`)
+to keep the repository small for deployment to resource-constrained targets.
+
+* `streamPcd()` (called from `main()` in `environment.cpp`) expects a sequence
+  of ordered `.pcd` files under `src/sensors/data/pcd/data_1/`.
+* The original 22-frame Udacity sample sequence is still recoverable from git
+  history: `git show 65415fb:src/sensors/data/pcd/data_1/0000000000.pcd > out.pcd` (etc.), or `git checkout 65415fb -- src/sensors/data/pcd/data_1/`.
+* Alternatively, point `data_1/` at your own recorded `.pcd` sequence.
 
 
 ### Notes on some files & folders
@@ -33,7 +44,7 @@ The configuration I used
 * **./src/**
   * **environment.cpp** - main function
   * **ransac.cpp** - function for RANSAC-based segmentation implementation
-  * **cluster_kdtree.cpp** & **kdtree.h** - functions for KD-Tree based clustering implementation
+  * **cluster_kdtree.cpp** & **kdtree_pcl.h** - functions for KD-Tree based clustering implementation
   * **processPointClouds.cpp** & **processPointClouds.h** - functions for point-cloud processing. functions that use segmentation and clustering based on PCL-library are also present, but commented
   * **/quiz/...** - contains quiz functions for testing ransac and clustering implementation
   * **/render/...** - contains rendering functions for display
@@ -107,6 +118,16 @@ once `./environment` is launch pcd data is read from files at `/sensors/data/pcd
 
 sample lidar-obstacle-detection image:
 ![alt text](/images/lidar_obs_det_01.jpg)
+
+##### Validation on synthetic data
+
+To confirm the segmentation/clustering pipeline generalizes beyond the bundled
+sample sequence, it was also run against a synthetic point cloud (ground plane
++ 3 well-separated obstacle blobs) built independently of any repo data. Both
+the hand-rolled KD-tree clustering and PCL's built-in `EuclideanClusterExtraction`
+correctly recovered all 3 clusters:
+
+![alt text](/images/custom_data_test.png)
 
 #### Resources
 

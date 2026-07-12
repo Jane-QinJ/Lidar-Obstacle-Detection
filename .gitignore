@@ -1,0 +1,12 @@
+\
+# build artifacts
+build/
+src/quiz/*/build/
+
+# editor
+.vscode/
+
+# point cloud sample data (kept out of git to keep the repo lightweight
+# for deployment to resource-constrained targets like Jetson Orin Nano;
+# see README.md "Sample Data" section)
+*.pcd
