@@ -17,3 +17,23 @@ list(REMOVE_ITEM PCL_LIBRARIES "vtkproj4")
 
 add_executable (environment src/environment.cpp src/render/render.cpp src/processPointClouds.cpp)
 target_link_libraries (environment ${PCL_LIBRARIES})
+
+# Live ROS1/VLP-16 node - built only when ROS (roscpp) is discoverable via
+# pkg-config, i.e. after `source /opt/ros/<distro>/setup.bash`. Uses
+# pkg-config rather than find_package(catkin ...) so this stays a plain
+# CMake build with no catkin workspace required.
+find_package(PkgConfig QUIET)
+if(PkgConfig_FOUND)
+  pkg_check_modules(ROSCPP QUIET roscpp sensor_msgs pcl_conversions visualization_msgs)
+endif()
+
+if(ROSCPP_FOUND)
+  include_directories(${ROSCPP_INCLUDE_DIRS})
+  link_directories(${ROSCPP_LIBRARY_DIRS})
+
+  add_executable (environment_ros src/environment_ros.cpp src/render/render.cpp src/processPointClouds.cpp)
+  target_compile_options(environment_ros PRIVATE ${ROSCPP_CFLAGS_OTHER})
+  target_link_libraries (environment_ros ${PCL_LIBRARIES} ${ROSCPP_LIBRARIES})
+else()
+  message(STATUS "ROS (roscpp) not found via pkg-config - skipping environment_ros target. Run 'source /opt/ros/<distro>/setup.bash' before cmake to enable it.")
+endif()

@@ -42,7 +42,9 @@ to keep the repository small for deployment to resource-constrained targets.
 * README.md: this file.
 * **images** - folder with images for the readme-file
 * **./src/**
-  * **environment.cpp** - main function
+  * **environment.cpp** - main function for offline `.pcd`-file playback
+  * **environment_ros.cpp** - main function for live ROS1 input (see "Live Input via ROS1" below)
+  * **city_block.h** - filter->segment->cluster->box pipeline shared by both entry points above
   * **ransac.cpp** - function for RANSAC-based segmentation implementation
   * **cluster_kdtree.cpp** & **kdtree_pcl.h** - functions for KD-Tree based clustering implementation
   * **processPointClouds.cpp** & **processPointClouds.h** - functions for point-cloud processing. functions that use segmentation and clustering based on PCL-library are also present, but commented
@@ -64,6 +66,56 @@ to run, use following from within the build folder:
 
 ```
 ./environment
+```
+
+### Live Input via ROS1
+
+`environment_ros` subscribes to a `sensor_msgs/PointCloud2` topic (e.g. a
+Velodyne VLP-16 publishing through the ROS1 `velodyne` driver stack) and runs
+each incoming frame through the same pipeline as the offline `.pcd` playback,
+instead of reading from disk.
+
+It only builds if ROS1 (tested on Noetic) is sourced *before* `cmake` runs, so
+`roscpp`/`sensor_msgs`/`pcl_conversions` are discoverable via `pkg-config`:
+
+```
+source /opt/ros/noetic/setup.bash
+mkdir build && cd build
+cmake ..
+make          # now also builds environment_ros
+```
+
+This deliberately avoids `find_package(catkin ...)` / a catkin workspace —
+`environment_ros` is a plain executable that links `roscpp` directly via
+`pkg-config`, so it builds the same way as `environment` and doesn't need to
+live under a workspace `src/` folder. It does need a ROS master reachable at
+`ROS_MASTER_URI` (e.g. `roscore`, or the driver's `roslaunch`) to connect to.
+
+To run against a real VLP-16 (default topic is `/velodyne_points`; override
+with `_topic:=/your/topic`):
+
+```
+# in one terminal: bring up the Velodyne driver, e.g.
+roslaunch velodyne_pointcloud VLP16_points.launch
+
+# in another terminal, from the build folder:
+./environment_ros
+```
+
+`environment_ros` does *not* open a local PCL viewer window (unlike the
+offline `environment` binary) — it stays headless so it can run over SSH on a
+robot with no display, and instead publishes the detection result as ROS
+topics for visualization in RViz on any machine on the network:
+
+* `/lidar_obstacle_detection/ground_cloud` (`sensor_msgs/PointCloud2`) — segmented road plane
+* `/lidar_obstacle_detection/obstacle_cloud` (`sensor_msgs/PointCloud2`) — clustered obstacle points
+* `/lidar_obstacle_detection/detection_boxes` (`visualization_msgs/MarkerArray`) — one wireframe bounding box per cluster
+
+A ready-made layout is provided at `rviz/lidar_obstacle_detection.rviz` (Fixed
+Frame `velodyne`, matching the driver's default `frame_id`):
+
+```
+rviz -d rviz/lidar_obstacle_detection.rviz
 ```
 
 ### Sample Results
