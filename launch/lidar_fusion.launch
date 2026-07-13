@@ -1,0 +1,70 @@
+<!--
+  Range-fused obstacle detection: one VLP-16 feed, split by distance from the
+  sensor, so each detector only ever handles the range it's suited for.
+
+    < range_threshold (default 2m): PCL RANSAC + Euclidean/KD-tree clustering
+      (lidar_obstacle_detection / environment_ros). Cheap, needs no training
+      data, and works fine on the sparse geometry close to the sensor where
+      PointPillars' voxel grid and training distribution are a poor fit.
+
+    >= range_threshold: PointPillars TensorRT deep-learning detector
+      (pointpillar package), tuned for middle/long range where there's
+      enough points per object for the model to work reliably.
+
+  Requires both packages built in this workspace (lidar_obstacle_detection,
+  pointpillar) and, if launch_velodyne:=true, the velodyne_pointcloud package
+  from the separate ~/ros_ws overlay to be on ROS_PACKAGE_PATH (source
+  ~/ros_ws/devel/setup.bash before this workspace's setup.bash).
+-->
+<launch>
+  <arg name="points_topic" default="/velodyne_points" />
+  <arg name="near_topic" default="/velodyne_points/near" />
+  <arg name="far_topic" default="/velodyne_points/far" />
+  <arg name="range_threshold" default="2.0" />
+  <arg name="fixed_frame" default="velodyne" />
+
+  <!-- Clustering tuning for close-range: filter_res is the voxel-grid leaf
+       size (m) applied before RANSAC/clustering - smaller keeps more points
+       per object at the cost of speed. remove_roof toggles a hardcoded
+       ego-vehicle roof-rack crop-box inherited from the original Udacity car
+       dataset this pipeline was built for; it sits at x:[-1.5,2.6]
+       y:[-1.7,1.7] z:[-1,-0.4] relative to the sensor, which is exactly
+       where a person standing close to a non-vehicle-mounted sensor shows
+       up, so it defaults off here. -->
+  <arg name="filter_res" default="0.15" />
+  <arg name="remove_roof" default="false" />
+
+  <!-- Sensor driver. Set to false if it's already running elsewhere (e.g.
+       a separate terminal per VLP16_PointPillars_realtime_experiment_report.md). -->
+  <arg name="launch_velodyne" default="false" />
+  <arg name="device_ip" default="192.168.1.201" />
+  <include if="$(arg launch_velodyne)" file="$(find velodyne_pointcloud)/launch/VLP16_points.launch">
+    <arg name="device_ip" value="$(arg device_ip)" />
+    <arg name="frame_id" value="$(arg fixed_frame)" />
+  </include>
+
+  <node pkg="lidar_obstacle_detection" type="range_gate" name="range_gate" output="screen">
+    <param name="input_topic" value="$(arg points_topic)" />
+    <param name="near_topic" value="$(arg near_topic)" />
+    <param name="far_topic" value="$(arg far_topic)" />
+    <param name="range_threshold" value="$(arg range_threshold)" />
+  </node>
+
+  <!-- Close range (<range_threshold): clustering. -->
+  <node pkg="lidar_obstacle_detection" type="environment_ros" name="lidar_obstacle_detection" output="screen">
+    <param name="topic" value="$(arg near_topic)" />
+    <param name="filter_res" value="$(arg filter_res)" />
+    <param name="remove_roof" value="$(arg remove_roof)" />
+  </node>
+
+  <!-- Middle/long range (>=range_threshold): PointPillars. -->
+  <include file="$(find pointpillar)/launch/pointpillar_custom_pedestrian.launch">
+    <arg name="points_topic" value="$(arg far_topic)" />
+    <arg name="fixed_frame" value="$(arg fixed_frame)" />
+    <arg name="open_rviz" value="false" />
+  </include>
+
+  <node pkg="rviz" type="rviz" name="lidar_fusion_rviz"
+        args="-d $(find lidar_obstacle_detection)/rviz/lidar_fusion.rviz -f $(arg fixed_frame)"
+        output="screen" />
+</launch>

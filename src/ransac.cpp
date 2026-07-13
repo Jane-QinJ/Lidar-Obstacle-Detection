@@ -69,10 +69,14 @@ std::unordered_set<int> Ransac<PointT>::Ransac3d(typename pcl::PointCloud<PointT
 			if (dist<=distanceTol) {
 				inliers.insert(i);
 			}
+		}
 
-			if (inliers.size()>inliersResult.size()) {
-				inliersResult = inliers;
-			}
+		// Compare/copy once per RANSAC iteration (inliers only grows within
+		// the for-loop above, so its final size here is already the max for
+		// this iteration) - doing this per-point instead was an O(n^2)
+		// unordered_set copy once a plane hypothesis picked up many inliers.
+		if (inliers.size()>inliersResult.size()) {
+			inliersResult = inliers;
 		}
 	}
 

@@ -19,6 +19,9 @@ namespace
     ros::Publisher groundPub;
     ros::Publisher obstaclePub;
     ros::Publisher markerPub;
+    bool applyFilter = true;
+    float filterRes = 0.15;
+    bool removeRoof = false;
 
     visualization_msgs::Marker boxToMarker(const Box& box, int id, const std_msgs::Header& header)
     {
@@ -61,7 +64,7 @@ namespace
         pcl::PointCloud<pcl::PointXYZI>::Ptr inputCloudI(new pcl::PointCloud<pcl::PointXYZI>);
         pcl::fromROSMsg(*msg, *inputCloudI);
 
-        DetectionResult result = detectObstacles(pointProcessorI, inputCloudI);
+        DetectionResult result = detectObstacles(pointProcessorI, inputCloudI, applyFilter, filterRes, removeRoof);
 
         sensor_msgs::PointCloud2 groundMsg;
         pcl::toROSMsg(*result.groundCloud, groundMsg);
@@ -94,6 +97,9 @@ int main(int argc, char** argv)
 
     std::string topic;
     privateNh.param<std::string>("topic", topic, "/velodyne_points");
+    privateNh.param<bool>("filter_cloud", applyFilter, true);
+    privateNh.param<float>("filter_res", filterRes, 0.15f);
+    privateNh.param<bool>("remove_roof", removeRoof, false);
 
     pointProcessorI = new ProcessPointClouds<pcl::PointXYZI>();
 
@@ -102,7 +108,9 @@ int main(int argc, char** argv)
     markerPub = privateNh.advertise<visualization_msgs::MarkerArray>("detection_boxes", 1);
 
     ros::Subscriber sub = nh.subscribe(topic, 1, cloudCallback);
-    ROS_INFO_STREAM("subscribed to " << topic << "; publishing detections on "
+    ROS_INFO_STREAM("subscribed to " << topic << "; filter_cloud=" << (applyFilter ? "true" : "false")
+        << ", filter_res=" << filterRes << "m, remove_roof=" << (removeRoof ? "true" : "false")
+        << "; publishing detections on "
         << privateNh.resolveName("ground_cloud") << ", "
         << privateNh.resolveName("obstacle_cloud") << ", "
         << privateNh.resolveName("detection_boxes")

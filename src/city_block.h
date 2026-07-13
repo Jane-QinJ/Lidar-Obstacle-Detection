@@ -19,11 +19,11 @@ struct DetectionResult
 // Filter->segment->cluster->box pipeline, no rendering. Shared by cityBlock()
 // (PCL-viewer rendering, used by the offline .pcd entry point) and
 // environment_ros.cpp (RViz publishing, used by the live entry point).
-inline DetectionResult detectObstacles(ProcessPointClouds<pcl::PointXYZI>* pointProcessorI, const pcl::PointCloud<pcl::PointXYZI>::Ptr& inputCloud)
+inline DetectionResult detectObstacles(ProcessPointClouds<pcl::PointXYZI>* pointProcessorI, const pcl::PointCloud<pcl::PointXYZI>::Ptr& inputCloud,
+                                        bool applyFilter = true, float filterRes = 0.4, bool removeRoof = true)
 {
   // hyperparameters
-  // filter params
-  float filterRes = 0.4;
+  // filter params (filterRes, removeRoof: see function args above)
   Eigen::Vector4f minPoint(-10, -6.5, -2, 1);
   Eigen::Vector4f maxPoint(30, 6.5, 1, 1);
   // segment params
@@ -34,8 +34,15 @@ inline DetectionResult detectObstacles(ProcessPointClouds<pcl::PointXYZI>* point
   int minClusterSize = 10;
   int maxClusterSize = 140;
 
-  // Filter cloud, to reduce omputational cost
-  pcl::PointCloud<pcl::PointXYZI>::Ptr filterCloud = pointProcessorI->FilterCloud(inputCloud, filterRes, minPoint, maxPoint);
+  auto startTime = std::chrono::steady_clock::now();
+
+  // Filter cloud (voxel downsample + crop-box ROI), to reduce computational
+  // cost. Skippable via applyFilter for A/B timing/quality comparisons.
+  pcl::PointCloud<pcl::PointXYZI>::Ptr filterCloud = applyFilter
+      ? pointProcessorI->FilterCloud(inputCloud, filterRes, minPoint, maxPoint, removeRoof)
+      : inputCloud;
+  std::cout << "input cloud size " << inputCloud->points.size()
+             << ", post-filter size " << filterCloud->points.size() << std::endl;
 
   // Step 1. Segment the filtered cloud into two parts, road and obstacles.
   // std::pair<pcl::PointCloud<pcl::PointXYZI>::Ptr, pcl::PointCloud<pcl::PointXYZI>::Ptr> segmentCloud = pointProcessorI->SegmentPlane(filterCloud, maxIter, distanceThreshold);
@@ -56,6 +63,11 @@ inline DetectionResult detectObstacles(ProcessPointClouds<pcl::PointXYZI>* point
         pointProcessorI->numPoints(cluster);
         result.boxes.push_back(pointProcessorI->BoundingBox(cluster));
   }
+
+  auto endTime = std::chrono::steady_clock::now();
+  auto elapsedTime = std::chrono::duration_cast<std::chrono::milliseconds>(endTime - startTime);
+  std::cout << "detectObstacles total (filter=" << (applyFilter ? "on" : "off")
+             << ") took " << elapsedTime.count() << " milliseconds" << std::endl;
 
   return result;
 }
