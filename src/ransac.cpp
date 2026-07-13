@@ -57,6 +57,24 @@ std::unordered_set<int> Ransac<PointT>::Ransac3d(typename pcl::PointCloud<PointT
 		d = - (a*x1 + b*y1 + c*z1);
 		sqrt_abc = sqrt(a*a + b*b + c*c);
 
+		// Reject non-horizontal (or degenerate) plane hypotheses before they
+		// ever compete on inlier count. Without this, "most inliers within
+		// distanceTol" is the only criterion, and that's distance/density
+		// dependent: at close range, heavy voxel downsampling can leave so
+		// few points (~30-40) that a *tilted* plane running through both the
+		// true ground and the base of a nearby low object out-scores the
+		// real (level) ground plane, sweeping the object into groundCloud.
+		// Requiring the normal be close to vertical makes "is this ground"
+		// a geometric check, not a point-count one, so it holds the same at
+		// 2m or 20m.
+		if (sqrt_abc < 1e-6f) {
+			continue; // three near-colinear points - no well-defined normal
+		}
+		const float kMinGroundNormalCos = 0.94f; // ~20 degrees off vertical
+		if (fabs(c) / sqrt_abc < kMinGroundNormalCos) {
+			continue; // not close to level - not a ground-plane candidate
+		}
+
 		// implement RANSAC via point-to-plane distance check
 		for (int i=0; i<num_points; i++) {
 			if (inliers.count(i)>0) {
