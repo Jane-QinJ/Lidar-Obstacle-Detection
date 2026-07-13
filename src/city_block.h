@@ -44,6 +44,19 @@ inline DetectionResult detectObstacles(ProcessPointClouds<pcl::PointXYZI>* point
   std::cout << "input cloud size " << inputCloud->points.size()
              << ", post-filter size " << filterCloud->points.size() << std::endl;
 
+  // RansacPlaneSegment needs >=3 points to define a plane hypothesis: below
+  // that, Ransac3d's `rand()%num_points` divides by zero (UB - on aarch64
+  // this doesn't trap, it silently returns an out-of-range index that then
+  // segfaults indexing the point vector) or, for 1-2 points, spins forever
+  // trying to pick 3 distinct indices that don't exist. Bail out before
+  // that rather than relying on callers to never send a near-empty frame.
+  if (filterCloud->points.size() < 3)
+  {
+    DetectionResult empty;
+    empty.groundCloud = filterCloud;
+    return empty;
+  }
+
   // Step 1. Segment the filtered cloud into two parts, road and obstacles.
   // std::pair<pcl::PointCloud<pcl::PointXYZI>::Ptr, pcl::PointCloud<pcl::PointXYZI>::Ptr> segmentCloud = pointProcessorI->SegmentPlane(filterCloud, maxIter, distanceThreshold);
   std::pair<pcl::PointCloud<pcl::PointXYZI>::Ptr, pcl::PointCloud<pcl::PointXYZI>::Ptr> segmentCloud = pointProcessorI->RansacPlaneSegment(filterCloud, maxIter, distanceThreshold);
