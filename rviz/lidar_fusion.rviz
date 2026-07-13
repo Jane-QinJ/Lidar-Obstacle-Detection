@@ -46,14 +46,14 @@ Visualization Manager:
       Color Transformer: FlatColor
       Decay Time: 0
       Enabled: true
-      Name: Ground (near)
+      Name: Ground (removed by range_gate)
       Position Transformer: XYZ
       Queue Size: 10
       Selectable: true
       Size (Pixels): 2
       Size (m): 0.02
       Style: Points
-      Topic: /lidar_obstacle_detection/ground_cloud
+      Topic: /range_gate/ground_cloud
       Unreliable: false
       Use Fixed Frame: true
       Use rainbow: true
@@ -85,6 +85,14 @@ Visualization Manager:
       Name: Detection Boxes (<2m, clustering)
       Namespaces:
         detection_boxes: true
+      Queue Size: 100
+      Value: true
+    - Class: rviz/Marker
+      Enabled: true
+      Marker Topic: /lidar_obstacle_detection/roi_box
+      Name: Crop-box ROI (<2m, clustering)
+      Namespaces:
+        roi_box: true
       Queue Size: 100
       Value: true
     - Alpha: 1

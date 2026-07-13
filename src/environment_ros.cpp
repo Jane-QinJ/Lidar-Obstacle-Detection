@@ -19,21 +19,26 @@ namespace
     ros::Publisher groundPub;
     ros::Publisher obstaclePub;
     ros::Publisher markerPub;
+    ros::Publisher roiPub;
     bool applyFilter = true;
     float filterRes = 0.15;
     bool removeRoof = false;
+    bool removeGround = true;
 
-    visualization_msgs::Marker boxToMarker(const Box& box, int id, const std_msgs::Header& header)
+    visualization_msgs::Marker boxToMarker(const Box& box, int id, const std_msgs::Header& header,
+                                            const std::string& ns, float r, float g, float b)
     {
         visualization_msgs::Marker marker;
         marker.header = header;
-        marker.ns = "detection_boxes";
+        marker.ns = ns;
         marker.id = id;
         marker.type = visualization_msgs::Marker::LINE_LIST;
         marker.action = visualization_msgs::Marker::ADD;
         marker.pose.orientation.w = 1.0;
         marker.scale.x = 0.05;
-        marker.color.r = 1.0f;
+        marker.color.r = r;
+        marker.color.g = g;
+        marker.color.b = b;
         marker.color.a = 1.0f;
 
         geometry_msgs::Point corners[8];
@@ -64,7 +69,7 @@ namespace
         pcl::PointCloud<pcl::PointXYZI>::Ptr inputCloudI(new pcl::PointCloud<pcl::PointXYZI>);
         pcl::fromROSMsg(*msg, *inputCloudI);
 
-        DetectionResult result = detectObstacles(pointProcessorI, inputCloudI, applyFilter, filterRes, removeRoof);
+        DetectionResult result = detectObstacles(pointProcessorI, inputCloudI, applyFilter, filterRes, removeRoof, removeGround);
 
         sensor_msgs::PointCloud2 groundMsg;
         pcl::toROSMsg(*result.groundCloud, groundMsg);
@@ -84,8 +89,15 @@ namespace
         clearMarker.action = visualization_msgs::Marker::DELETEALL;
         markerArray.markers.push_back(clearMarker);
         for (size_t i = 0; i < result.boxes.size(); ++i)
-            markerArray.markers.push_back(boxToMarker(result.boxes[i], (int)i, msg->header));
+            markerArray.markers.push_back(boxToMarker(result.boxes[i], (int)i, msg->header, "detection_boxes", 1.0f, 0.0f, 0.0f));
         markerPub.publish(markerArray);
+
+        // Ground/obstacle separation only ever runs inside this crop box -
+        // draw it so it's clear what region a "ground correctly removed" or
+        // "object swallowed by ground" judgment call in rviz is being made
+        // relative to.
+        visualization_msgs::Marker roiMarker = boxToMarker(result.roi, 0, msg->header, "roi_box", 1.0f, 1.0f, 0.0f);
+        roiPub.publish(roiMarker);
     }
 }
 
@@ -100,16 +112,19 @@ int main(int argc, char** argv)
     privateNh.param<bool>("filter_cloud", applyFilter, true);
     privateNh.param<float>("filter_res", filterRes, 0.15f);
     privateNh.param<bool>("remove_roof", removeRoof, false);
+    privateNh.param<bool>("remove_ground", removeGround, true);
 
     pointProcessorI = new ProcessPointClouds<pcl::PointXYZI>();
 
     groundPub = privateNh.advertise<sensor_msgs::PointCloud2>("ground_cloud", 1);
     obstaclePub = privateNh.advertise<sensor_msgs::PointCloud2>("obstacle_cloud", 1);
     markerPub = privateNh.advertise<visualization_msgs::MarkerArray>("detection_boxes", 1);
+    roiPub = privateNh.advertise<visualization_msgs::Marker>("roi_box", 1);
 
     ros::Subscriber sub = nh.subscribe(topic, 1, cloudCallback);
     ROS_INFO_STREAM("subscribed to " << topic << "; filter_cloud=" << (applyFilter ? "true" : "false")
         << ", filter_res=" << filterRes << "m, remove_roof=" << (removeRoof ? "true" : "false")
+        << ", remove_ground=" << (removeGround ? "true" : "false")
         << "; publishing detections on "
         << privateNh.resolveName("ground_cloud") << ", "
         << privateNh.resolveName("obstacle_cloud") << ", "

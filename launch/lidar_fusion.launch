@@ -1,15 +1,18 @@
 <!--
-  Range-fused obstacle detection: one VLP-16 feed, split by distance from the
-  sensor, so each detector only ever handles the range it's suited for.
+  Range-fused obstacle detection: one VLP-16 feed, cropped to a shared ROI
+  and ground-removed once (range_gate), then split by distance from the
+  sensor so each detector only ever handles the range it's suited for.
 
-    < range_threshold (default 2m): PCL RANSAC + Euclidean/KD-tree clustering
-      (lidar_obstacle_detection / environment_ros). Cheap, needs no training
-      data, and works fine on the sparse geometry close to the sensor where
+    < range_threshold (default 2m): Euclidean/KD-tree clustering
+      (lidar_obstacle_detection / environment_ros) on the already
+      ground-removed near-range points. Cheap, needs no training data, and
+      works fine on the sparse geometry close to the sensor where
       PointPillars' voxel grid and training distribution are a poor fit.
 
     >= range_threshold: PointPillars TensorRT deep-learning detector
-      (pointpillar package), tuned for middle/long range where there's
-      enough points per object for the model to work reliably.
+      (pointpillar package) on the already ground-removed far-range points,
+      tuned for middle/long range where there's enough points per object for
+      the model to work reliably.
 
   Requires both packages built in this workspace (lidar_obstacle_detection,
   pointpillar) and, if launch_velodyne:=true, the velodyne_pointcloud package
@@ -24,15 +27,19 @@
   <arg name="fixed_frame" default="velodyne" />
 
   <!-- Clustering tuning for close-range: filter_res is the voxel-grid leaf
-       size (m) applied before RANSAC/clustering - smaller keeps more points
-       per object at the cost of speed. remove_roof toggles a hardcoded
+       size (m) applied before clustering - smaller keeps more points per
+       object at the cost of speed. remove_roof toggles a hardcoded
        ego-vehicle roof-rack crop-box inherited from the original Udacity car
        dataset this pipeline was built for; it sits at x:[-1.5,2.6]
        y:[-1.7,1.7] z:[-1,-0.4] relative to the sensor, which is exactly
        where a person standing close to a non-vehicle-mounted sensor shows
-       up, so it defaults off here. -->
+       up, so it defaults off here. remove_ground defaults off here too -
+       range_gate already crops to the ROI and strips ground once, upstream
+       of the near/far split, so there's no ground left in this node's input
+       to (re-)segment. -->
   <arg name="filter_res" default="0.15" />
   <arg name="remove_roof" default="false" />
+  <arg name="remove_ground" default="false" />
 
   <!-- Sensor driver. Set to false if it's already running elsewhere (e.g.
        a separate terminal per VLP16_PointPillars_realtime_experiment_report.md). -->
@@ -55,6 +62,7 @@
     <param name="topic" value="$(arg near_topic)" />
     <param name="filter_res" value="$(arg filter_res)" />
     <param name="remove_roof" value="$(arg remove_roof)" />
+    <param name="remove_ground" value="$(arg remove_ground)" />
   </node>
 
   <!-- Middle/long range (>=range_threshold): PointPillars. -->
