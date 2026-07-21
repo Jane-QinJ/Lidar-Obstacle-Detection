@@ -53,27 +53,35 @@ std::pair<typename pcl::PointCloud<PointT>::Ptr, typename pcl::PointCloud<PointT
 /**********************************************************************/
 
 template<typename PointT>
-typename pcl::PointCloud<PointT>::Ptr ProcessPointClouds<PointT>::FilterCloud(typename pcl::PointCloud<PointT>::Ptr cloud, float filterRes, Eigen::Vector4f minPoint, Eigen::Vector4f maxPoint)
+typename pcl::PointCloud<PointT>::Ptr ProcessPointClouds<PointT>::FilterCloud(typename pcl::PointCloud<PointT>::Ptr cloud, float filterRes, Eigen::Vector4f minPoint, Eigen::Vector4f maxPoint, float egoRadius)
 {
     // Time segmentation process
     auto startTime = std::chrono::steady_clock::now();
 
-    // TODO:: Fill in the function to do voxel grid point reduction and region based filtering
-    // Create the filtering object
-    pcl::VoxelGrid<PointT> vgrid;
-    typename pcl::PointCloud<PointT>::Ptr cloud_filtered (new pcl::PointCloud<PointT>);
-
-    vgrid.setInputCloud(cloud);
-    vgrid.setLeafSize(filterRes, filterRes, filterRes);
-    vgrid.filter(*cloud_filtered);
-
+    // Crop to the region of interest *before* voxelizing: VoxelGrid sizes its
+    // internal index grid off the input cloud's full extent, so voxelizing
+    // the raw (un-cropped) cloud first divides the sensor's whole range by
+    // filterRes - with a small filterRes this overflows PCL's internal
+    // 32-bit voxel index ("Leaf size is too small for the input dataset")
+    // and voxelization silently degrades, causing frame-to-frame density and
+    // clustering to become inconsistent. Cropping first keeps the voxel
+    // grid's extent bounded to minPoint/maxPoint regardless of filterRes.
     typename pcl::PointCloud<PointT>::Ptr cloudRegion (new pcl::PointCloud<PointT>);
 
     pcl::CropBox<PointT> region(true);
     region.setMin(minPoint);
     region.setMax(maxPoint);
-    region.setInputCloud(cloud_filtered);
+    region.setInputCloud(cloud);
     region.filter(*cloudRegion);
+
+    pcl::VoxelGrid<PointT> vgrid;
+    typename pcl::PointCloud<PointT>::Ptr cloud_filtered (new pcl::PointCloud<PointT>);
+
+    vgrid.setInputCloud(cloudRegion);
+    vgrid.setLeafSize(filterRes, filterRes, filterRes);
+    vgrid.filter(*cloud_filtered);
+
+    cloudRegion = cloud_filtered;
 
     std::vector<int> indices;
 
@@ -93,6 +101,26 @@ typename pcl::PointCloud<PointT>::Ptr ProcessPointClouds<PointT>::FilterCloud(ty
     extract.setIndices(inliers);
     extract.setNegative(true);
     extract.filter(*cloudRegion);
+
+    // Drop points within egoRadius meters of the sensor origin (0,0,0) - the
+    // VLP-16's own mount/tripod/near-field returns and multi-path noise
+    // right around the sensor, which the car-shaped "roof" box above doesn't
+    // cover for a stationary tripod rig. Disabled by default (egoRadius=0).
+    if (egoRadius > 0.0f)
+    {
+        typename pcl::PointCloud<PointT>::Ptr egoFiltered (new pcl::PointCloud<PointT>);
+        egoFiltered->points.reserve(cloudRegion->points.size());
+        float radiusSq = egoRadius * egoRadius;
+        for (const PointT& pt : cloudRegion->points)
+        {
+            if (pt.x * pt.x + pt.y * pt.y + pt.z * pt.z >= radiusSq)
+                egoFiltered->points.push_back(pt);
+        }
+        egoFiltered->width = egoFiltered->points.size();
+        egoFiltered->height = 1;
+        egoFiltered->is_dense = true;
+        cloudRegion = egoFiltered;
+    }
 
     auto endTime = std::chrono::steady_clock::now();
     auto elapsedTime = std::chrono::duration_cast<std::chrono::milliseconds>(endTime - startTime);

@@ -10,6 +10,13 @@
 #include <pcl_conversions/pcl_conversions.h>
 #include <visualization_msgs/MarkerArray.h>
 #include <geometry_msgs/Point.h>
+#include <std_msgs/Float32MultiArray.h>
+
+#include <chrono>
+#include <cmath>
+#include <cstdio>
+#include <fstream>
+#include <sstream>
 
 #include "city_block.h"
 
@@ -19,6 +26,79 @@ namespace
     ros::Publisher groundPub;
     ros::Publisher obstaclePub;
     ros::Publisher markerPub;
+    ros::Publisher distancePub;
+    std::string outputDir;
+
+    // Straight-line distance from the sensor origin to a box's center -
+    // i.e. how far the tripod is from whatever's in that box.
+    float boxDistance(const Box& box)
+    {
+        float cx = 0.5f * (box.x_min + box.x_max);
+        float cy = 0.5f * (box.y_min + box.y_max);
+        float cz = 0.5f * (box.z_min + box.z_max);
+        return std::sqrt(cx * cx + cy * cy + cz * cz);
+    }
+
+    visualization_msgs::Marker distanceLabelMarker(const Box& box, float distance, int id, const std_msgs::Header& header)
+    {
+        visualization_msgs::Marker marker;
+        marker.header = header;
+        marker.ns = "detection_distances";
+        marker.id = id;
+        marker.type = visualization_msgs::Marker::TEXT_VIEW_FACING;
+        marker.action = visualization_msgs::Marker::ADD;
+        marker.pose.position.x = 0.5f * (box.x_min + box.x_max);
+        marker.pose.position.y = 0.5f * (box.y_min + box.y_max);
+        marker.pose.position.z = box.z_max + 0.15f;
+        marker.pose.orientation.w = 1.0;
+        marker.scale.z = 0.2;
+        marker.color.g = 1.0f;
+        marker.color.a = 1.0f;
+        char text[32];
+        std::snprintf(text, sizeof(text), "%.2f m", distance);
+        marker.text = text;
+        return marker;
+    }
+
+    // Writes one JSON label file per frame, in the same box schema used by
+    // SUSTechPOINTS (position/rotation/scale under "psr"), so detections can
+    // be diffed against hand-labelled ground truth with the same tooling.
+    // Boxes here are axis-aligned (rotation always 0) since that's all
+    // BoundingBox() produces.
+    void writeBoxesJson(const std::vector<Box>& boxes, const std_msgs::Header& header)
+    {
+        char filename[64];
+        std::snprintf(filename, sizeof(filename), "%d.%09d.json", header.stamp.sec, header.stamp.nsec);
+        std::ofstream out(outputDir + "/" + filename);
+        if (!out)
+        {
+            ROS_WARN_STREAM_THROTTLE(5, "failed to open output file in " << outputDir);
+            return;
+        }
+
+        out << "[\n";
+        for (size_t i = 0; i < boxes.size(); ++i)
+        {
+            const Box& b = boxes[i];
+            float cx = 0.5f * (b.x_min + b.x_max);
+            float cy = 0.5f * (b.y_min + b.y_max);
+            float cz = 0.5f * (b.z_min + b.z_max);
+            float sx = b.x_max - b.x_min;
+            float sy = b.y_max - b.y_min;
+            float sz = b.z_max - b.z_min;
+
+            out << "  {\n"
+                << "    \"obj_id\": \"" << i << "\",\n"
+                << "    \"obj_type\": \"Unknown\",\n"
+                << "    \"psr\": {\n"
+                << "      \"position\": {\"x\": " << cx << ", \"y\": " << cy << ", \"z\": " << cz << "},\n"
+                << "      \"rotation\": {\"x\": 0, \"y\": 0, \"z\": 0},\n"
+                << "      \"scale\": {\"x\": " << sx << ", \"y\": " << sy << ", \"z\": " << sz << "}\n"
+                << "    }\n"
+                << "  }" << (i + 1 < boxes.size() ? "," : "") << "\n";
+        }
+        out << "]\n";
+    }
 
     visualization_msgs::Marker boxToMarker(const Box& box, int id, const std_msgs::Header& header)
     {
@@ -56,12 +136,31 @@ namespace
         return marker;
     }
 
+    // Rolling average of detectObstacles() wall-clock time, logged every
+    // logInterval frames so detection speed can be reported without
+    // depending on external tools like `rostopic hz`.
+    double totalProcessingSec = 0.0;
+    int frameCount = 0;
+    const int logInterval = 30;
+
     void cloudCallback(const sensor_msgs::PointCloud2ConstPtr& msg)
     {
         pcl::PointCloud<pcl::PointXYZI>::Ptr inputCloudI(new pcl::PointCloud<pcl::PointXYZI>);
         pcl::fromROSMsg(*msg, *inputCloudI);
 
+        auto t0 = std::chrono::steady_clock::now();
         DetectionResult result = detectObstacles(pointProcessorI, inputCloudI);
+        auto t1 = std::chrono::steady_clock::now();
+        double frameSec = std::chrono::duration<double>(t1 - t0).count();
+        totalProcessingSec += frameSec;
+        ++frameCount;
+        if (frameCount % logInterval == 0)
+        {
+            double avgSec = totalProcessingSec / frameCount;
+            ROS_INFO_STREAM("detection speed: last frame " << (frameSec * 1000.0) << " ms ("
+                << (1.0 / frameSec) << " Hz), running avg " << (avgSec * 1000.0) << " ms ("
+                << (1.0 / avgSec) << " Hz) over " << frameCount << " frames");
+        }
 
         sensor_msgs::PointCloud2 groundMsg;
         pcl::toROSMsg(*result.groundCloud, groundMsg);
@@ -80,9 +179,20 @@ namespace
         visualization_msgs::Marker clearMarker;
         clearMarker.action = visualization_msgs::Marker::DELETEALL;
         markerArray.markers.push_back(clearMarker);
+
+        std_msgs::Float32MultiArray distanceMsg;
         for (size_t i = 0; i < result.boxes.size(); ++i)
+        {
             markerArray.markers.push_back(boxToMarker(result.boxes[i], (int)i, msg->header));
+            float distance = boxDistance(result.boxes[i]);
+            markerArray.markers.push_back(distanceLabelMarker(result.boxes[i], distance, (int)i, msg->header));
+            distanceMsg.data.push_back(distance);
+        }
         markerPub.publish(markerArray);
+        distancePub.publish(distanceMsg);
+
+        if (!outputDir.empty())
+            writeBoxesJson(result.boxes, msg->header);
     }
 }
 
@@ -94,18 +204,23 @@ int main(int argc, char** argv)
 
     std::string topic;
     privateNh.param<std::string>("topic", topic, "/velodyne_points");
+    privateNh.param<std::string>("output_dir", outputDir, "");
+    if (!outputDir.empty())
+        ROS_INFO_STREAM("writing per-frame detection boxes as JSON to " << outputDir);
 
     pointProcessorI = new ProcessPointClouds<pcl::PointXYZI>();
 
     groundPub = privateNh.advertise<sensor_msgs::PointCloud2>("ground_cloud", 1);
     obstaclePub = privateNh.advertise<sensor_msgs::PointCloud2>("obstacle_cloud", 1);
     markerPub = privateNh.advertise<visualization_msgs::MarkerArray>("detection_boxes", 1);
+    distancePub = privateNh.advertise<std_msgs::Float32MultiArray>("box_distances", 1);
 
     ros::Subscriber sub = nh.subscribe(topic, 1, cloudCallback);
     ROS_INFO_STREAM("subscribed to " << topic << "; publishing detections on "
         << privateNh.resolveName("ground_cloud") << ", "
         << privateNh.resolveName("obstacle_cloud") << ", "
-        << privateNh.resolveName("detection_boxes")
+        << privateNh.resolveName("detection_boxes") << ", "
+        << privateNh.resolveName("box_distances")
         << " - view in rviz with Fixed Frame set to the input cloud's frame_id");
 
     ros::spin();

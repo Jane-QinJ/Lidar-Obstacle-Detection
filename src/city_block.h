@@ -22,20 +22,29 @@ struct DetectionResult
 inline DetectionResult detectObstacles(ProcessPointClouds<pcl::PointXYZI>* pointProcessorI, const pcl::PointCloud<pcl::PointXYZI>::Ptr& inputCloud)
 {
   // hyperparameters
+  // Tuned for stable single-person detection within a ~2m range (close-range
+  // static rig test), not the original highway-driving scene: the crop box
+  // is tight around the sensor, the voxel leaf is much finer since a person
+  // at 2m is a small, sparse cluster that a 0.4m voxel was collapsing/losing
+  // (this was the cause of inconsistent detection), and min/max cluster size
+  // are widened to match the resulting higher point density per person.
   // filter params
-  float filterRes = 0.4;
-  Eigen::Vector4f minPoint(-10, -6.5, -2, 1);
-  Eigen::Vector4f maxPoint(30, 6.5, 1, 1);
+  float filterRes = 0.05;
+  Eigen::Vector4f minPoint(-1, -10.0, -1.0, 1);
+  Eigen::Vector4f maxPoint(20.0, 10.0, 3.0, 1);
+  // radius (m) around the sensor origin to discard outright - tripod/mount
+  // near-field returns, not real obstacles
+  float egoRadius = 0.5;
   // segment params
   int maxIter = 40;
-  float distanceThreshold = 0.3;
+  float distanceThreshold = 0.03;
   // cluster params
-  float clusterTolerance = 0.5;
-  int minClusterSize = 10;
-  int maxClusterSize = 140;
+  float clusterTolerance = 0.3;
+  int minClusterSize = 5;
+  int maxClusterSize = 2000;
 
   // Filter cloud, to reduce omputational cost
-  pcl::PointCloud<pcl::PointXYZI>::Ptr filterCloud = pointProcessorI->FilterCloud(inputCloud, filterRes, minPoint, maxPoint);
+  pcl::PointCloud<pcl::PointXYZI>::Ptr filterCloud = pointProcessorI->FilterCloud(inputCloud, filterRes, minPoint, maxPoint, egoRadius);
 
   // Step 1. Segment the filtered cloud into two parts, road and obstacles.
   // std::pair<pcl::PointCloud<pcl::PointXYZI>::Ptr, pcl::PointCloud<pcl::PointXYZI>::Ptr> segmentCloud = pointProcessorI->SegmentPlane(filterCloud, maxIter, distanceThreshold);
