@@ -18,6 +18,12 @@ list(REMOVE_ITEM PCL_LIBRARIES "vtkproj4")
 add_executable (environment src/environment.cpp src/render/render.cpp src/processPointClouds.cpp)
 target_link_libraries (environment ${PCL_LIBRARIES})
 
+# Offline batch evaluation entry point: reads a directory of .pcd files and
+# writes one detection JSON per frame, named after the input frame - no ROS,
+# no PCL viewer, no rosbag replay/timestamp-sync involved.
+add_executable (environment_offline_eval src/environment_offline_eval.cpp src/render/render.cpp src/processPointClouds.cpp)
+target_link_libraries (environment_offline_eval ${PCL_LIBRARIES} boost_filesystem boost_system)
+
 # Live ROS1/VLP-16 node - built only when ROS (roscpp) is discoverable via
 # pkg-config, i.e. after `source /opt/ros/<distro>/setup.bash`. Uses
 # pkg-config rather than find_package(catkin ...) so this stays a plain
